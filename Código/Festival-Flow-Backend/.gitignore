@@ -1,0 +1,44 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# ===== Virtual environments =====
+.venv/
+venv/
+env/
+
+# ===== Logs =====
+*.log
+
+# ===== Cache =====
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ===== Build =====
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== IDE =====
+.vscode/
+.idea/
+
+# ===== ENV (MUY IMPORTANTE) =====
+.env
+.env.*
+!.env.example
+
+# ===== Firebase (CRÍTICO) =====
+serviceAccountKey.json
+Firebase/serviceAccountKey.json
+
+# ===== Scraper sessions (browser state, no credentials) =====
+sessions/
