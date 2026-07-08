@@ -3,7 +3,15 @@ from fastapi import HTTPException
 from app.core.firebase import db
 from app.core.utils import serialize_date, utc_now_iso
 from app.schemas.auth_schema import CurrentUser
-from app.schemas.project_schema import ProjectCreateRequest, ProjectResponse, ProjectStatusUpdateRequest, ProjectUpdateRequest
+from app.schemas.project_schema import (
+    ProjectCreateRequest,
+    ProjectFilmFreewayFields,
+    ProjectResponse,
+    ProjectStatusUpdateRequest,
+    ProjectUpdateRequest,
+)
+
+FILMFREEWAY_FIELDS = list(ProjectFilmFreewayFields.model_fields.keys())
 
 
 def _serialize_project(project_id: str, data: dict) -> ProjectResponse:
@@ -19,6 +27,7 @@ def _serialize_project(project_id: str, data: dict) -> ProjectResponse:
         status=data.get("status", ""),
         created_at=serialize_date(data.get("created_at")) or "",
         updated_at=serialize_date(data.get("updated_at")) or "",
+        **{field: data.get(field) for field in FILMFREEWAY_FIELDS},
     )
 
 
@@ -51,6 +60,7 @@ def create_project(payload: ProjectCreateRequest, current_user: CurrentUser) -> 
         "status": payload.status,
         "created_at": timestamp,
         "updated_at": timestamp,
+        **{field: getattr(payload, field) for field in FILMFREEWAY_FIELDS},
     }
 
     project_ref.set(project_data)
@@ -111,6 +121,10 @@ def update_my_project(
         "status": payload.status,
         "created_at": existing_data.get("created_at") or utc_now_iso(),
         "updated_at": utc_now_iso(),
+        **{
+            field: value if (value := getattr(payload, field)) is not None else existing_data.get(field)
+            for field in FILMFREEWAY_FIELDS
+        },
     }
 
     project_doc.reference.set(updated_data)

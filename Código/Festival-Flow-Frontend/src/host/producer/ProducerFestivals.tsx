@@ -47,11 +47,14 @@ import type { Project } from "../../types/producer";
 import { useCurrentProfile } from "../useCurrentProfile";
 import ProducerGuard from "./ProducerGuard";
 import { useAutoTranslate, useFestivalFlowLanguage } from "../../hooks/useAutoTranslate";
+import { useScrapedFormTranslation } from "../../hooks/useScrapedFormTranslation";
 import {
   analyzeFilmFreewayCamoufox,
   fillOpenFilmFreewayForm,
 } from "../../service/filmfreewayCamoufoxApi";
 import type { FillOpenFilmFreewayFormError } from "../../service/filmfreewayCamoufoxApi";
+import TagsInput from "../../components/TagsInput";
+import MultiSelectDropdown from "../../components/MultiSelectDropdown";
 
 const T = createContext<(text: string) => string>((t) => t);
 const useFT = () => useContext(T);
@@ -105,7 +108,9 @@ const FESTIVALS_BASE_TEXTS: string[] = [
   "Conectar FilmFreeway",
   "Proyecto guardado y festival abierto con sesión iniciada.",
   "Ver en FilmFreeway",
-  "campo con problemas", "campos con problemas",
+  "Requerido", "Campos pendientes", "Generar respuestas con IA", "Proyecto a postular",
+  "Generado con IA",
+  "Hubo problemas para rellenar algunos campos automáticamente. Por favor revísalos antes de enviar el formulario.",
 ];
 
 const PAGE_SIZES = [10, 25, 50] as const;
@@ -1158,6 +1163,82 @@ function normalizeField(
   };
 }
 
+function isEmptyFormValue(value: unknown): boolean {
+  if (value == null) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  return String(value).trim() === "";
+}
+
+type ProjectFallbackMatcher = {
+  test: (label: string) => boolean;
+  getValue: (project: Project) => unknown;
+};
+
+const PROJECT_FALLBACK_FIELD_MATCHERS: ProjectFallbackMatcher[] = [
+  {
+    test: (label) => /project\s*title/i.test(label),
+    getValue: (project) => project.project_title || project.title || "",
+  },
+  {
+    test: (label) => /synopsis/i.test(label),
+    getValue: (project) => project.brief_synopsis || project.description || "",
+  },
+  {
+    test: (label) => /genre/i.test(label),
+    getValue: (project) => project.genres ?? [],
+  },
+  {
+    test: (label) => /hour/i.test(label),
+    getValue: (project) => (project.duration_hours != null ? String(project.duration_hours) : ""),
+  },
+  {
+    test: (label) => /minute/i.test(label),
+    getValue: (project) =>
+      project.duration_minutes != null ? String(project.duration_minutes) : "",
+  },
+  {
+    test: (label) => /second/i.test(label),
+    getValue: (project) =>
+      project.duration_seconds != null ? String(project.duration_seconds) : "",
+  },
+  {
+    test: (label) => /budget.*currency|currency.*budget/i.test(label),
+    getValue: (project) => project.production_budget_currency || "",
+  },
+  {
+    test: (label) => /budget/i.test(label),
+    getValue: (project) =>
+      project.production_budget != null ? String(project.production_budget) : "",
+  },
+  {
+    test: (label) => /shooting\s*format/i.test(label),
+    getValue: (project) => project.shooting_format || "",
+  },
+  {
+    test: (label) => /aspect\s*ratio/i.test(label),
+    getValue: (project) => project.aspect_ratio || "",
+  },
+  {
+    test: (label) => /film\s*colou?r/i.test(label),
+    getValue: (project) => project.film_color || "",
+  },
+  {
+    test: (label) => /student\s*(project|film)/i.test(label),
+    getValue: (project) =>
+      project.student_project == null ? "" : project.student_project ? "Yes" : "No",
+  },
+  {
+    test: (label) => /first[-\s]?time\s*film\s*-?\s*maker|first[-\s]?time\s*director/i.test(label),
+    getValue: (project) =>
+      project.first_time_filmmaker == null ? "" : project.first_time_filmmaker ? "Yes" : "No",
+  },
+];
+
+function getProjectFallbackValue(label: string, project: Project): unknown {
+  const matcher = PROJECT_FALLBACK_FIELD_MATCHERS.find((entry) => entry.test(label));
+  return matcher ? matcher.getValue(project) : undefined;
+}
+
 function sectionEntries(
   source: unknown
 ): Array<{ key: string; title: string; description?: string; fields: unknown[] }> {
@@ -1374,7 +1455,6 @@ function SelectionPanel({
   const [fillErrorsDetail, setFillErrorsDetail] = useState<FillOpenFilmFreewayFormError[]>([]);
   const [fillSavedUrl, setFillSavedUrl] = useState("");
   const [analyzeSource, setAnalyzeSource] = useState<"legacy" | "camoufox">("legacy");
-  const [camoufoxMeta, setCamoufoxMeta] = useState<{ finalUrl: string; finalTitle: string } | null>(null);
 
   const singleFilmFreewayFestival =
     festivals.length === 1 && isFilmFreewayFestival(festivals[0]) ? festivals[0] : null;
@@ -1415,15 +1495,16 @@ function SelectionPanel({
       ),
     [analyzeBatchId, structuredForm, unifiedForm, festivalFields, festivals]
   );
-  const sourceUsed = normalizedForm?.source ?? "fallback";
-  const sectionCount =
-    sourceUsed === "structured_form"
-      ? rawSectionCount(structuredForm)
-      : normalizedForm?.sections.length ?? 0;
-  const fieldCount =
-    sourceUsed === "structured_form"
-      ? rawFieldCount(structuredForm)
-      : normalizedForm?.fields.length ?? 0;
+  const failedFieldKeys = useMemo(
+    () => new Set(fillErrorsDetail.map((item) => item.key)),
+    [fillErrorsDetail]
+  );
+  const formLanguage = useFestivalFlowLanguage();
+  const { getTranslatedSectionTitle, getTranslatedFieldLabel } = useScrapedFormTranslation(
+    normalizedForm?.sections ?? [],
+    formLanguage,
+    token
+  );
   const analyzeWarning = Boolean(analyzeResult?.warning);
 
   const allFilled =
@@ -1617,6 +1698,22 @@ function SelectionPanel({
         valuesConverted[key] = entry.value;
         metadata[key] = { confidence: entry.confidence, source: entry.source };
       }
+
+      if (project) {
+        (normalizedForm?.fields ?? []).forEach((field) => {
+          const key =
+            field.selector || field.id || field.name || field.label || field.field_id;
+          const alreadyFilled = !isEmptyFormValue(valuesConverted[key] ?? formValues[key]);
+          if (alreadyFilled) return;
+
+          const fallbackValue = getProjectFallbackValue(field.label, project);
+          if (fallbackValue === undefined || isEmptyFormValue(fallbackValue)) return;
+
+          valuesConverted[key] = fallbackValue;
+          metadata[key] = { confidence: 1, source: "project" };
+        });
+      }
+
       setFormValues((prev) => ({ ...prev, ...valuesConverted }));
       setAnswerMetadata(metadata);
       setMissingFields(data.missing_fields ?? []);
@@ -1686,13 +1783,12 @@ function SelectionPanel({
       setStructuredForm(structuredFormPayload);
       setUnifiedForm(null);
       setFestivalFields(null);
-      setCamoufoxMeta({ finalUrl: raw.final_url, finalTitle: raw.final_title });
       setFormValues(
         Object.fromEntries(
           (data?.fields ?? [])
             .filter((field) => field.type !== "file" && field.current_value)
             .map((field) => [
-              field.field_id || field.selector || field.name || field.id || field.label,
+              field.selector || field.id || field.name || field.label || field.field_id,
               field.current_value ?? "",
             ])
         )
@@ -1768,7 +1864,6 @@ function SelectionPanel({
       console.log("[Frontend] Analyze Batch:", batchId);
 
       setAnalyzeSource("legacy");
-      setCamoufoxMeta(null);
       setAnalyzeResult(raw);
       setAnalyzeBatchId(batchId);
       setStructuredForm(raw.structured_form ?? null);
@@ -1795,7 +1890,7 @@ function SelectionPanel({
           data.fields
             .filter((field) => field.type !== "file" && field.current_value)
             .map((field) => [
-              field.field_id || field.selector || field.name || field.id || field.label,
+              field.selector || field.id || field.name || field.label || field.field_id,
               field.current_value ?? "",
             ])
         )
@@ -2120,36 +2215,11 @@ function SelectionPanel({
                         {tAuto("Revisa y completa los campos antes de rellenarlos automáticamente en FilmFreeway.")}
                       </p>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-extrabold text-emerald-700">
-                        {tAuto("Fuente usada")}: {sourceUsed}
-                      </span>
-                      <span className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-extrabold text-blue-700">
-                        {tAuto("Secciones encontradas")}: {sectionCount}
-                      </span>
-                      <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-extrabold text-cyan-700">
-                        {tAuto("Campos encontrados")}: {fieldCount}
-                      </span>
-                      <span className="rounded-full border border-gray-300 bg-gray-100 px-3 py-1 text-xs font-extrabold text-gray-600">
-                        Batch: {analyzeBatchId ? `${analyzeBatchId.slice(0, 10)}...` : tAuto("No informado")}
-                      </span>
-                      {camoufoxMeta ? (
-                        <a
-                          href={camoufoxMeta.finalUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-extrabold text-violet-700 hover:bg-violet-100"
-                          title={camoufoxMeta.finalTitle}
-                        >
-                          {camoufoxMeta.finalTitle || camoufoxMeta.finalUrl}
-                        </a>
-                      ) : null}
-                    </div>
                   </div>
                   <div className="mt-3 flex flex-wrap items-end gap-3">
                     <label className="flex min-w-[220px] flex-1 flex-col gap-1.5">
                       <span className="text-xs font-extrabold uppercase tracking-wider text-gray-500">
-                        Proyecto a postular
+                        {tAuto("Proyecto a postular")}
                       </span>
                       <select
                         className="h-10 rounded-xl border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50"
@@ -2186,7 +2256,7 @@ function SelectionPanel({
                       ) : (
                         <FiZap />
                       )}
-                      Generar respuestas con IA
+                      {tAuto("Generar respuestas con IA")}
                     </button>
                   </div>
                   {generateError ? (
@@ -2207,29 +2277,6 @@ function SelectionPanel({
                 </p>
               ) : null}
 
-              <div className="hidden">
-                <div className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)] p-3">
-                  <p className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
-                    {tAuto("Secciones encontradas")}
-                  </p>
-                  <p className="mt-1 text-2xl font-black">{sectionCount}</p>
-                </div>
-                <div className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)] p-3">
-                  <p className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
-                    {tAuto("Campos encontrados")}
-                  </p>
-                  <p className="mt-1 text-2xl font-black">{fieldCount}</p>
-                </div>
-                <div className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)] p-3">
-                  <p className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
-                    {tAuto("Fuente usada")}
-                  </p>
-                  <p className="mt-2 inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-extrabold text-emerald-700">
-                    {sourceUsed}
-                  </p>
-                </div>
-              </div>
-
               <div className="mt-5 grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
                 <aside className="rounded-xl border border-gray-200 bg-gray-50 p-4 lg:sticky lg:top-4 lg:self-start">
                   <p className="mb-3 text-xs font-black uppercase tracking-wider text-gray-500">
@@ -2243,7 +2290,7 @@ function SelectionPanel({
                         type="button"
                         onClick={() => scrollToSection(section.key)}
                       >
-                        <span className="min-w-0 truncate">{section.title}</span>
+                        <span className="min-w-0 truncate">{getTranslatedSectionTitle(section.title)}</span>
                         <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
                           {section.fields.length}
                         </span>
@@ -2263,7 +2310,7 @@ function SelectionPanel({
                       <div className="flex min-w-0 gap-2">
                         <FiChevronRight className="mt-1 shrink-0 text-gray-400 transition group-open:rotate-90" />
                         <div className="min-w-0">
-                          <h3 className="truncate text-base font-black text-gray-900">{section.title}</h3>
+                          <h3 className="truncate text-base font-black text-gray-900">{getTranslatedSectionTitle(section.title)}</h3>
                           {section.description ? (
                             <p className="mt-1 text-xs text-gray-500">{section.description}</p>
                           ) : null}
@@ -2279,7 +2326,7 @@ function SelectionPanel({
                         const isRequired = field.required;
                         const appliesToCount = field.applies_to.length;
                         const fieldId = `uf-${field.section}-${field.field_id}`;
-                        const fieldKey = field.field_id || field.selector || field.name || field.id || field.label;
+                        const fieldKey = field.selector || field.id || field.name || field.label || field.field_id;
                         const technicalKey = `${section.key}-${field.field_id}`;
                         const showTechnical = technicalOpen.has(technicalKey);
                         const normalizedType = field.type.toLowerCase();
@@ -2289,25 +2336,27 @@ function SelectionPanel({
                         const arrayValue = Array.isArray(fieldValue)
                           ? fieldValue.map(String)
                           : [];
+                        const hasFillError = failedFieldKeys.has(fieldKey);
                         return (
                           <div
                             key={technicalKey}
-                            className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition hover:shadow-md"
+                            className={`rounded-lg border p-4 shadow-sm transition hover:shadow-md ${
+                              hasFillError
+                                ? "border-amber-300 bg-amber-50/60"
+                                : "border-gray-200 bg-white"
+                            }`}
                           >
                             <div className="mb-3 flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <p className="text-sm font-extrabold leading-snug text-gray-900">
-                                  {field.label}
+                                  {getTranslatedFieldLabel(field.label)}
                                 </p>
                                 <div className="mt-2 flex flex-wrap gap-1.5">
                                   {isRequired ? (
                                     <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700">
-                                      required
+                                      {tAuto("Requerido")}
                                     </span>
                                   ) : null}
-                                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-bold text-gray-700">
-                                    {field.type || "text"}
-                                  </span>
                                   {appliesToCount > 0 ? (
                                     <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-bold text-blue-700">
                                       <FiInfo className="text-[10px]" />
@@ -2326,7 +2375,7 @@ function SelectionPanel({
                                               ? "bg-blue-100 text-blue-700"
                                               : "bg-gray-100 text-gray-600"
                                       }`}>
-                                        {answerMetadata[fieldKey].source}
+                                        {tAuto("Generado con IA")}
                                       </span>
                                       {answerMetadata[fieldKey].confidence < 1 ? (
                                         <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">
@@ -2394,27 +2443,21 @@ function SelectionPanel({
                                   </option>
                                 ))}
                               </select>
-                            ) : normalizedType === "select-multiple" ? (
-                              <select
+                            ) : normalizedType === "select-multiple" || (normalizedType === "multiselect" && hasOptions) ? (
+                              <MultiSelectDropdown
                                 id={fieldId}
-                                className="min-h-28 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
-                                multiple
                                 value={arrayValue}
-                                onChange={(event) =>
-                                  updateFormValue(
-                                    fieldKey,
-                                    Array.from(event.target.selectedOptions).map(
-                                      (option) => option.value
-                                    )
-                                  )
-                                }
-                              >
-                                {(field.options ?? []).map((opt) => (
-                                  <option key={opt} value={opt}>
-                                    {opt}
-                                  </option>
-                                ))}
-                              </select>
+                                options={field.options ?? []}
+                                onChange={(next) => updateFormValue(fieldKey, next)}
+                                placeholder={field.placeholder || tAuto("Seleccionar...")}
+                              />
+                            ) : normalizedType === "multiselect" ? (
+                              <TagsInput
+                                id={fieldId}
+                                value={arrayValue}
+                                onChange={(next) => updateFormValue(fieldKey, next)}
+                                placeholder={field.placeholder}
+                              />
                             ) : normalizedType === "checkbox_group" || normalizedType === "radio_group" ? (
                               <div className="space-y-2 rounded-xl border border-gray-200 bg-gray-50 p-3">
                                 {(hasOptions ? field.options! : [tAuto("No informado")]).map((option) => (
@@ -2453,7 +2496,7 @@ function SelectionPanel({
                                 type="button"
                                 disabled
                               >
-                                {field.label}
+                                {getTranslatedFieldLabel(field.label)}
                               </button>
                             ) : (
                               <input
@@ -2490,11 +2533,8 @@ function SelectionPanel({
 
               {answerSummary ? (
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-extrabold text-emerald-700">
-                    Campos mapeados: {answerSummary.mapped_fields}
-                  </span>
                   <span className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-extrabold text-violet-700">
-                    Generados por IA: {answerSummary.ai_fields}
+                    Campos con IA: {answerSummary.mapped_fields + answerSummary.ai_fields}
                   </span>
                   <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-extrabold text-amber-700">
                     Campos faltantes: {answerSummary.missing_count}
@@ -2508,7 +2548,7 @@ function SelectionPanel({
                     <div className="flex items-center gap-2">
                       <FiAlertCircle className="shrink-0 text-amber-400" />
                       <span className="text-sm font-extrabold text-amber-300">
-                        Campos pendientes:{" "}
+                        {tAuto("Campos pendientes")}:{" "}
                         <span className="ml-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-amber-200">
                           {missingFields.length}
                         </span>
@@ -2640,25 +2680,12 @@ function SelectionPanel({
                     </p>
                   ) : null}
                   {fillErrorsDetail.length > 0 ? (
-                    <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                      <p className="mb-1.5 font-bold">
-                        {fillErrorsDetail.length}{" "}
-                        {fillErrorsDetail.length !== 1
-                          ? tAuto("campos con problemas")
-                          : tAuto("campo con problemas")}
-                        :
-                      </p>
-                      <ul className="space-y-1">
-                        {fillErrorsDetail.map((item, index) => (
-                          <li key={`${item.key}-${index}`} className="flex items-start gap-1.5">
-                            <FiAlertCircle className="mt-0.5 shrink-0" />
-                            <span>
-                              <span className="font-mono font-semibold">{item.key}</span>: {item.reason}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                    <p className="mb-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">
+                      <FiAlertCircle className="mt-0.5 shrink-0" />
+                      {tAuto(
+                        "Hubo problemas para rellenar algunos campos automáticamente. Por favor revísalos antes de enviar el formulario."
+                      )}
+                    </p>
                   ) : null}
                   <div className="flex flex-col gap-3 pb-4 sm:flex-row sm:justify-end">
                     <button

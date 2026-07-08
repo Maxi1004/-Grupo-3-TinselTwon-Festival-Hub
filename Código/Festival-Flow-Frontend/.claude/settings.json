@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls schemas *)",
+      "Bash(ls models *)",
+      "Bash(ls routers *)",
+      "Bash(npm run *)",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(timeout 30 bash -c 'until curl -sf http://localhost:5173 >/dev/null; do sleep 1; done')",
+      "Bash(chromium-cli --help)",
+      "Bash(npm ls *)",
+      "Bash(npx --no-install playwright --version)",
+      "Bash(pkill -f \"vite\")",
+      "Bash(timeout 30 bash -c 'until curl -sf http://localhost:5173 >/dev/null || curl -sf http://localhost:5174 >/dev/null; do sleep 1; done')",
+      "Bash(mkdir -p \"/c/Users/Maxi/AppData/Local/Temp/claude/c--Users-Maxi-Desktop-Festival-Flow-Frontend/3301ad6e-a786-4609-ac4c-1e559230bf02/scratchpad/shots\")",
+      "Bash(\"/c/Program Files/Google/Chrome/Application/chrome.exe\" --headless --disable-gpu --no-sandbox --screenshot=\"/c/Users/Maxi/AppData/Local/Temp/claude/c--Users-Maxi-Desktop-Festival-Flow-Frontend/3301ad6e-a786-4609-ac4c-1e559230bf02/scratchpad/shots/modal1.png\" --window-size=1400,1000 --virtual-time-budget=4000 \"http://localhost:5175/__debug/project-form-modal\")",
+      "Read(//c/Users/Maxi/AppData/Local/Temp/claude/c--Users-Maxi-Desktop-Festival-Flow-Frontend/3301ad6e-a786-4609-ac4c-1e559230bf02/scratchpad/**)",
+      "Bash(\"/c/Program Files/Google/Chrome/Application/chrome.exe\" --headless=new --disable-gpu --no-sandbox --remote-debugging-port=9333 --window-size=1400,1000 about:blank)",
+      "Bash(curl -s http://localhost:9333/json/version)",
+      "Bash(curl -s http://localhost:9333/json)",
+      "Bash(node cdp-shot.mjs \"http://localhost:5175/__debug/project-form-modal\" \"./shots/modal2.png\")",
+      "Bash(taskkill //F //IM chrome.exe //T)",
+      "Bash(taskkill //F //IM node.exe //T)",
+      "Bash(node cdp-shot.mjs \"http://localhost:5174/__debug/project-form-modal\" \"./shots/modal_v2_top.png\")",
+      "Bash(node cdp-shot.mjs \"http://localhost:5174/__debug/opportunity-form-modal\" \"./shots/opp_modal1.png\")"
+    ]
+  }
+}

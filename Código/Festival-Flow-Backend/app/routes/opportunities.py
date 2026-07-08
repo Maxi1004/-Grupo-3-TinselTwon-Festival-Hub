@@ -45,6 +45,14 @@ async def get_opportunities(
     )
 
 
+@router.post("/opportunities", response_model=OpportunityResponse)
+async def post_opportunity(
+    payload: OpportunityCreateRequest,
+    current_user: CurrentUser = Depends(require_role(UserRole.PRODUCER)),
+):
+    return create_opportunity(payload, current_user)
+
+
 @router.get("/opportunities/me", response_model=list[OpportunityResponse])
 async def get_my_opportunities(
     current_user: CurrentUser = Depends(require_role(UserRole.PRODUCER)),

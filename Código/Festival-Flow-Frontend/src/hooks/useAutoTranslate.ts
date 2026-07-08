@@ -81,7 +81,8 @@ export function useFestivalFlowLanguage(): string {
 export function useAutoTranslate(
   baseTexts: string[],
   language: string,
-  token?: string | null
+  token?: string | null,
+  sourceLanguage: string = BASE_LANGUAGE
 ): { tAuto: (text: string) => string; language: string } {
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const textsToTranslate = useStableTexts(baseTexts);
@@ -89,7 +90,7 @@ export function useAutoTranslate(
   useEffect(() => {
     setTranslations((current) => (Object.keys(current).length === 0 ? current : {}));
 
-    if (language === BASE_LANGUAGE) {
+    if (language === sourceLanguage) {
       return;
     }
 
@@ -108,14 +109,14 @@ export function useAutoTranslate(
     }
 
     let isMounted = true;
-    const requestKey = `auto-translate:${language}:${missingTexts.join("|")}`;
+    const requestKey = `auto-translate:${sourceLanguage}:${language}:${missingTexts.join("|")}`;
 
     reusePendingRequest(requestKey, () =>
       translateTexts(
         {
           texts: missingTexts,
           target_lang: language,
-          source_language: BASE_LANGUAGE,
+          source_language: sourceLanguage,
         },
         token
       )
@@ -137,23 +138,23 @@ export function useAutoTranslate(
         });
       })
       .catch(() => {
-        // Keep base Spanish text if translation fails.
+        // Keep original text if translation fails.
       });
 
     return () => {
       isMounted = false;
     };
-  }, [language, textsToTranslate, token]);
+  }, [language, sourceLanguage, textsToTranslate, token]);
 
   const tAuto = useCallback(
     (text: string): string => {
-      if (language === BASE_LANGUAGE || !shouldTranslate(text)) {
+      if (language === sourceLanguage || !shouldTranslate(text)) {
         return text;
       }
 
       return translations[text.trim()] ?? getCachedTranslation(language, text.trim()) ?? text;
     },
-    [language, translations]
+    [language, sourceLanguage, translations]
   );
 
   return { tAuto, language };

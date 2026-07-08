@@ -75,6 +75,8 @@ _LABEL_MAP: list[tuple[str, str]] = [
     (r"\bcolor\b|\bcolour\b|b&w|black.*white|blanco.*negro", "color"),
     (r"student|estudiante", "student_project"),
     (r"first.?time.?filmmaker|primer.{0,10}film", "first_time_filmmaker"),
+    (r"first.?time.?screenwriter|primer.{0,10}guionista", "first_time_screenwriter"),
+    (r"genre|g[eé]nero", "genres"),
     (r"\bformat\b|formato", "format"),
     # Director
     (r"director.{0,15}first|nombre.{0,15}director|first.{0,10}name.{0,10}director", "director_first_name"),
@@ -140,7 +142,7 @@ _NAME_MAP: dict[str, str] = {
     "project[social_facebook]": "facebook",
     "project[social_instagram]": "instagram",
     "project[posted_credits][directors]": "director_name",
-    "project[genres_video]": "production_type",
+    "project[genres_video]": "genres",
     "project[film_color][0]": "color",
     "first_name": "director_first_name",
     "middle_name": "director_middle_name",
@@ -297,13 +299,43 @@ def _build_extended_project(project: dict) -> dict:
     if desc:
         extended.setdefault("short_synopsis", desc[:250].rsplit(" ", 1)[0] + ("…" if len(desc) > 250 else ""))
         extended.setdefault("long_synopsis", desc)
+    if project.get("brief_synopsis"):
+        extended["short_synopsis"] = project["brief_synopsis"]
 
-    # Country fallback from location
-    if not project.get("country") and project.get("location"):
-        extended["country"] = project["location"]
+    if project.get("project_title"):
+        extended["title"] = project["project_title"]
+
+    # Country: country_of_origin (new) > country (legacy) > location (fallback)
+    extended["country"] = project.get("country_of_origin") or project.get("country") or project.get("location")
+    if project.get("country_of_filming"):
+        extended["filming_countries"] = project["country_of_filming"]
+    if project.get("languages"):
+        extended["language"] = project["languages"]
+    if project.get("shooting_format"):
+        extended["format"] = project["shooting_format"]
+    if project.get("film_color"):
+        extended["color"] = project["film_color"]
+    if project.get("production_budget") is not None:
+        extended["budget"] = project["production_budget"]
+    if project.get("production_budget_currency"):
+        extended["currency"] = project["production_budget_currency"]
+    if project.get("key_cast"):
+        extended["cast"] = project["key_cast"]
+    if project.get("genres"):
+        extended["genres"] = project["genres"]
+    elif project.get("production_type"):
+        extended["genres"] = [project["production_type"]]
+    if project.get("completion_year") and not project.get("end_date"):
+        extended["end_date"] = str(project["completion_year"])
 
     # Runtime normalization
     extended.update(_normalize_runtime(project))
+    if project.get("duration_hours") is not None:
+        extended["runtime_hours"] = str(project["duration_hours"])
+    if project.get("duration_minutes") is not None:
+        extended["runtime_minutes"] = str(project["duration_minutes"])
+    if project.get("duration_seconds") is not None:
+        extended["runtime_seconds"] = str(project["duration_seconds"])
 
     # Director / crew extraction
     extended.update(_extract_director_info(project))

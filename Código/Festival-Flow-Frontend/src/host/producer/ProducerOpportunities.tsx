@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import ProducerGuard from "./ProducerGuard";
 import TalentProfileModal from "../../components/TalentProfileModal";
 import TalentAvatar from "../../components/TalentAvatar";
@@ -12,29 +12,19 @@ import {
   getOpportunityApplications,
   updateApplicationStatus,
 } from "../../service/applicationApi";
-import { getMyProjects } from "../../service/projectApi";
 import { reusePendingRequest } from "../../service/pendingRequest";
 import {
   getMyOpportunitiesCrm,
-  updateOpportunity,
   updateOpportunityStatus,
 } from "../../service/opportunityApi";
-import type { Opportunity, Project } from "../../types/producer";
+import type { Opportunity } from "../../types/producer";
 import type { TalentApplication } from "../../types/talent";
 import {
   formatDisplayDate,
   formatStatusLabel,
   isActiveStatus,
   isCancelledStatus,
-  normalizeOpportunityFormData,
-  requirementsToTextarea,
-  toDateInputValue,
-  toVisibleStatusAction,
 } from "./utils";
-import {
-  OPPORTUNITY_MODALITY_OPTIONS,
-  OPPORTUNITY_STATUS_OPTIONS,
-} from "../../types/producer";
 import "../../styles/producer.css";
 import { useCurrentProfile } from "../useCurrentProfile";
 import { useAutoTranslate, useFestivalFlowLanguage } from "../../hooks/useAutoTranslate";
@@ -47,19 +37,7 @@ import {
   talentFallbackFromApplication,
 } from "../../utils/talentProfile";
 import { inferCrewCategoryFromText } from "../../utils/crewCategory";
-
-type OpportunityFormState = {
-  project_id: string;
-  title: string;
-  role_needed: string;
-  specialty: string;
-  description: string;
-  location: string;
-  modality: string;
-  requirements: string;
-  status: string;
-  deadline: string;
-};
+import OpportunityFormModal from "./OpportunityFormModal";
 
 type OpportunityStatusGroup = {
   key: string;
@@ -392,37 +370,20 @@ function getOpportunityProjectLabel(opportunity: Opportunity, fallback = "Proyec
   );
 }
 
-function buildFormState(opportunity: Opportunity): OpportunityFormState {
-  return {
-    project_id: opportunity.project_id ?? "",
-    title: opportunity.title ?? "",
-    role_needed: opportunity.role_needed ?? "",
-    specialty: opportunity.specialty ?? "",
-    description: opportunity.description ?? "",
-    location: opportunity.location ?? "",
-    modality: opportunity.modality ?? "REMOTE",
-    requirements: requirementsToTextarea(opportunity.requirements),
-    status: toVisibleStatusAction(opportunity.status),
-    deadline: toDateInputValue(opportunity.deadline),
-  };
-}
-
 function ProducerOpportunitiesContent() {
   const navigate = useNavigate();
   const location = useLocation();
   const { token } = useCurrentProfile();
   const language = useFestivalFlowLanguage();
-  const [projects, setProjects] = useState<Project[]>([]);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [closingId, setClosingId] = useState("");
   const [loadingApplicantsId, setLoadingApplicantsId] = useState("");
   const [updatingApplicationId, setUpdatingApplicationId] = useState("");
   const [detailOpportunity, setDetailOpportunity] = useState<Opportunity | null>(null);
-  const [editingOpportunity, setEditingOpportunity] = useState<Opportunity | null>(null);
-  const [editFormData, setEditFormData] = useState<OpportunityFormState | null>(null);
-  const [isEditingSubmitting, setIsEditingSubmitting] = useState(false);
-  const [editError, setEditError] = useState("");
+  const [opportunityModal, setOpportunityModal] = useState<
+    { mode: "create" } | { mode: "edit"; opportunityId: string } | null
+  >(null);
   const [applicantsModalOpportunity, setApplicantsModalOpportunity] =
     useState<Opportunity | null>(null);
   const [profileApplication, setProfileApplication] =
@@ -451,7 +412,6 @@ function ProducerOpportunitiesContent() {
     () =>
       combineTranslationTexts(
         producerOpportunitiesBaseTexts,
-        projects.flatMap((project) => [project.title, project.description, project.location, project.production_type, project.status]),
         opportunities.flatMap((opportunity) => [
           opportunity.title,
           opportunity.description,
@@ -472,7 +432,7 @@ function ProducerOpportunitiesContent() {
           ])
         )
       ),
-    [applicantsByOpportunity, opportunities, projects]
+    [applicantsByOpportunity, opportunities]
   );
   const { tAuto } = useAutoTranslate(translationTexts, language, token);
   const getVisibleOpportunityProjectLabel = (opportunity: Opportunity) => {
@@ -658,77 +618,22 @@ function ProducerOpportunitiesContent() {
     setFilters((current) => ({ ...current, [name]: value }));
   };
 
-  const ensureProjectsLoaded = async () => {
-    if (projects.length > 0) {
-      return;
-    }
+  const handleOpportunitySaved = (savedOpportunity: Opportunity) => {
+    setOpportunities((current) => {
+      const exists = current.some((item) => item.id === savedOpportunity.id);
+      return exists
+        ? current.map((item) => (item.id === savedOpportunity.id ? savedOpportunity : item))
+        : [savedOpportunity, ...current];
+    });
 
-    const nextProjects = await reusePendingRequest(
-      `producer-opportunities-projects:${token}`,
-      () => getMyProjects(token ?? undefined)
+    setDetailOpportunity((current) =>
+      current?.id === savedOpportunity.id ? savedOpportunity : current
+    );
+    setApplicantsModalOpportunity((current) =>
+      current?.id === savedOpportunity.id ? savedOpportunity : current
     );
 
-    setProjects(nextProjects);
-  };
-
-  const handleOpenEditModal = async (opportunity: Opportunity) => {
-    try {
-      setEditError("");
-      await ensureProjectsLoaded();
-    } catch (loadError) {
-      setEditError(
-        loadError instanceof Error
-          ? loadError.message
-          : tAuto("No se pudieron cargar los proyectos para editar.")
-      );
-    }
-
-    setEditingOpportunity(opportunity);
-    setEditFormData(buildFormState(opportunity));
-  };
-
-  const handleEditChange = (
-    event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
-  ) => {
-    const { name, value } = event.target;
-    setEditFormData((current) => (current ? { ...current, [name]: value } : current));
-  };
-
-  const handleEditSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    if (!editingOpportunity || !editFormData) return;
-
-    try {
-      setIsEditingSubmitting(true);
-      setEditError("");
-
-      const updated = await updateOpportunity(
-        editingOpportunity.id,
-        normalizeOpportunityFormData(editFormData),
-        token ?? undefined
-      );
-
-      setOpportunities((current) =>
-        current.map((item) => (item.id === updated.id ? updated : item))
-      );
-
-      setDetailOpportunity((current) => (current?.id === updated.id ? updated : current));
-      setApplicantsModalOpportunity((current) =>
-        current?.id === updated.id ? updated : current
-      );
-
-      setEditingOpportunity(null);
-      setEditFormData(null);
-    } catch (submitError) {
-      setEditError(
-        submitError instanceof Error
-          ? submitError.message
-          : tAuto("No se pudo actualizar la convocatoria.")
-      );
-    } finally {
-      setIsEditingSubmitting(false);
-    }
+    setOpportunityModal(null);
   };
 
   const handleCloseOpportunity = async (opportunityId: string) => {
@@ -747,7 +652,6 @@ function ProducerOpportunitiesContent() {
       );
 
       setDetailOpportunity((current) => (current?.id === updated.id ? updated : current));
-      setEditingOpportunity((current) => (current?.id === updated.id ? updated : current));
       setApplicantsModalOpportunity((current) =>
         current?.id === updated.id ? updated : current
       );
@@ -946,9 +850,13 @@ function ProducerOpportunitiesContent() {
             )}
           </p>
         </div>
-        <Link className="producer-button producer-button--primary" to="/producer/opportunities/new">
+        <button
+          className="producer-button producer-button--primary"
+          type="button"
+          onClick={() => setOpportunityModal({ mode: "create" })}
+        >
           {tAuto("Nueva convocatoria")}
-        </Link>
+        </button>
       </section>
 
       <section className="producer-metrics">
@@ -1169,7 +1077,9 @@ function ProducerOpportunitiesContent() {
                         <button
                           className="producer-button"
                           type="button"
-                          onClick={() => void handleOpenEditModal(opportunity)}
+                          onClick={() =>
+                            setOpportunityModal({ mode: "edit", opportunityId: opportunity.id })
+                          }
                         >
                           {tAuto("Editar")}
                         </button>
@@ -1278,7 +1188,10 @@ function ProducerOpportunitiesContent() {
               <button
                 className="producer-button"
                 type="button"
-                onClick={() => void handleOpenEditModal(detailOpportunity)}
+                onClick={() => {
+                  setDetailOpportunity(null);
+                  setOpportunityModal({ mode: "edit", opportunityId: detailOpportunity.id });
+                }}
               >
                 {tAuto("Editar")}
               </button>
@@ -1315,163 +1228,15 @@ function ProducerOpportunitiesContent() {
         </div>
       ) : null}
 
-      {editingOpportunity && editFormData ? (
-        <div className="producer-modal" role="presentation">
-          <article
-            className="producer-modal__panel producer-project-detail-modal"
-            role="dialog"
-            aria-modal="true"
-          >
-            <div className="producer-project-detail-modal__header">
-              <div>
-                <p className="producer-page__eyebrow">{tAuto("Editar convocatoria")}</p>
-                <h2>{editingOpportunity.title}</h2>
-              </div>
-              <button
-                className="producer-button producer-button--primary"
-                type="button"
-                onClick={() => {
-                  setEditingOpportunity(null);
-                  setEditFormData(null);
-                  setEditError("");
-                }}
-              >
-                {tAuto("Cerrar")}
-              </button>
-            </div>
-
-            <form className="producer-form" onSubmit={handleEditSubmit}>
-              <label className="producer-field">
-                <span>{tAuto("Proyecto")}</span>
-                <select
-                  name="project_id"
-                  value={editFormData.project_id}
-                  onChange={handleEditChange}
-                  required
-                >
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {tAuto(project.title)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="producer-field">
-                <span>{tAuto("Título")}</span>
-                <input name="title" value={editFormData.title} onChange={handleEditChange} required />
-              </label>
-
-              <label className="producer-field">
-                <span>{tAuto("Rol requerido")}</span>
-                <input
-                  name="role_needed"
-                  value={editFormData.role_needed}
-                  onChange={handleEditChange}
-                  required
-                />
-              </label>
-
-              <label className="producer-field">
-                <span>{tAuto("Especialidad")}</span>
-                <input
-                  name="specialty"
-                  value={editFormData.specialty}
-                  onChange={handleEditChange}
-                  required
-                />
-              </label>
-
-              <label className="producer-field">
-                <span>{tAuto("Ubicación")}</span>
-                <input
-                  name="location"
-                  value={editFormData.location}
-                  onChange={handleEditChange}
-                  required
-                />
-              </label>
-
-              <label className="producer-field">
-                <span>{tAuto("Modalidad")}</span>
-                <select name="modality" value={editFormData.modality} onChange={handleEditChange}>
-                  {OPPORTUNITY_MODALITY_OPTIONS.map((modality) => (
-                    <option key={modality} value={modality}>
-                      {tAuto(formatOpportunityModality(modality))}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="producer-field">
-                <span>{tAuto("Estado")}</span>
-                <select name="status" value={editFormData.status} onChange={handleEditChange}>
-                  {OPPORTUNITY_STATUS_OPTIONS.map((status) => (
-                    <option key={status.value} value={status.value}>
-                      {tAuto(status.label)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="producer-field">
-                <span>{tAuto("Fecha límite")}</span>
-                <input
-                  type="date"
-                  name="deadline"
-                  value={editFormData.deadline}
-                  onChange={handleEditChange}
-                />
-              </label>
-
-              <label className="producer-field producer-field--full">
-                <span>{tAuto("Descripción")}</span>
-                <textarea
-                  name="description"
-                  value={editFormData.description}
-                  onChange={handleEditChange}
-                  rows={4}
-                  required
-                />
-              </label>
-
-              <label className="producer-field producer-field--full">
-                <span>{tAuto("Requisitos")}</span>
-                <textarea
-                  name="requirements"
-                  value={editFormData.requirements}
-                  onChange={handleEditChange}
-                  rows={4}
-                />
-              </label>
-
-              {editError ? (
-                <p className="producer-feedback producer-feedback--error">{editError}</p>
-              ) : null}
-
-              <div className="producer-actions">
-                <button
-                  className="producer-button"
-                  type="button"
-                  onClick={() => {
-                    setEditingOpportunity(null);
-                    setEditFormData(null);
-                    setEditError("");
-                  }}
-                >
-                  {tAuto("Cancelar")}
-                </button>
-                <button
-                  className="producer-button producer-button--primary"
-                  type="submit"
-                  disabled={isEditingSubmitting}
-                >
-                  {isEditingSubmitting ? tAuto("Guardando...") : tAuto("Guardar cambios")}
-                </button>
-              </div>
-            </form>
-          </article>
-        </div>
+      {opportunityModal ? (
+        <OpportunityFormModal
+          mode={opportunityModal.mode}
+          opportunityId={
+            opportunityModal.mode === "edit" ? opportunityModal.opportunityId : undefined
+          }
+          onClose={() => setOpportunityModal(null)}
+          onSaved={handleOpportunitySaved}
+        />
       ) : null}
 
       {applicantsModalOpportunity ? (
@@ -1519,9 +1284,8 @@ function ProducerOpportunitiesContent() {
                       key={application.id}
                       className="producer-list-card producer-applicant-card"
                     >
-                      <div className="producer-record__header">
                         <button
-                          className="producer-profile-trigger producer-applicant-inline"
+                          className="producer-profile-trigger producer-applicant-card__avatar"
                           type="button"
                           disabled={!resolveTalentUserId(application)}
                           title={
@@ -1536,19 +1300,14 @@ function ProducerOpportunitiesContent() {
                             name={getApplicantName(application)}
                             size="sm"
                           />
-                          <div>
-                            <p className="producer-list-card__meta">
-                              {getApplicantEmail(application)}
-                            </p>
-                            <strong className="producer-list-card__title">
-                              {getApplicantName(application)}
-                            </strong>
-                          </div>
                         </button>
-                        <span className={`producer-status producer-status--${applicationStatus.toLowerCase() || "default"}`}>
-                          {tAuto(formatApplicationStatus(application.status))}
-                        </span>
-                      </div>
+                        <div className="producer-applicant-card__info">
+                          <p className="producer-list-card__meta">
+                            {getApplicantEmail(application)}
+                          </p>
+                          <strong className="producer-list-card__title">
+                            {getApplicantName(application)}
+                          </strong>
 
                       <p className="producer-list-card__text">
                         {tAuto("Fecha de postulación:")}{" "}
@@ -1624,6 +1383,10 @@ function ProducerOpportunitiesContent() {
                           </>
                         )}
                       </div>
+                        </div>
+                        <span className={`producer-status producer-status--${applicationStatus.toLowerCase() || "default"}`}>
+                          {tAuto(formatApplicationStatus(application.status))}
+                        </span>
                     </article>
                   );
                 }

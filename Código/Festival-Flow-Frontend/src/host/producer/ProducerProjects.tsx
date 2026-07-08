@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ProducerGuard from "./ProducerGuard";
 import TalentProfileModal from "../../components/TalentProfileModal";
 import TalentAvatar from "../../components/TalentAvatar";
+import ProjectFormModal from "./ProjectFormModal";
+import OpportunityFormModal from "./OpportunityFormModal";
 import { getMyProjects, updateProjectStatus } from "../../service/projectApi";
 import { getMyOpportunities } from "../../service/opportunityApi";
 import { getOpportunityApplications } from "../../service/applicationApi";
@@ -192,8 +193,23 @@ function formatApplicationDate(value?: string | null): string {
   }).format(parsedDate);
 }
 
-function getProjectOpportunityCount(project: Project): number {
-  return Math.max(0, Number(project.opportunities_count) || 0);
+function getProjectOpportunityCount(
+  project: Project,
+  opportunityCountByProjectId: Record<string, number>
+): number {
+  const opportunitiesField = (project as unknown as { opportunities?: unknown }).opportunities;
+  if (Array.isArray(opportunitiesField)) {
+    return opportunitiesField.length;
+  }
+
+  if (project.opportunities_count != null) {
+    const parsedCount = Number(project.opportunities_count);
+    if (!Number.isNaN(parsedCount)) {
+      return Math.max(0, parsedCount);
+    }
+  }
+
+  return opportunityCountByProjectId[project.id] ?? 0;
 }
 
 function getApplicantName(application: TalentApplication): string {
@@ -218,12 +234,18 @@ function getApplicantSpecialties(application: TalentApplication): string[] {
 }
 
 function ProducerProjectsContent() {
-  const navigate = useNavigate();
   const { token } = useCurrentProfile();
   const language = useFestivalFlowLanguage();
 
   const [projects, setProjects] = useState<Project[]>([]);
+  const [opportunityCountByProjectId, setOpportunityCountByProjectId] = useState<
+    Record<string, number>
+  >({});
   const [filters, setFilters] = useState<ProjectFilters>(initialFilters);
+  const [projectModal, setProjectModal] = useState<
+    { mode: "create" } | { mode: "edit"; projectId: string } | null
+  >(null);
+  const [opportunityModal, setOpportunityModal] = useState<{ projectId: string } | null>(null);
   const [detailProject, setDetailProject] = useState<Project | null>(null);
   const [applicationsProject, setApplicationsProject] = useState<Project | null>(null);
   const [profileApplication, setProfileApplication] =
@@ -255,37 +277,56 @@ function ProducerProjectsContent() {
 
   const { tAuto } = useAutoTranslate(translationTexts, language, token);
 
+  const loadProjects = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      setError("");
+      const nextProjects = await reusePendingRequest(
+        `producer-projects:${token}`,
+        () => getMyProjects(token ?? undefined)
+      );
+      setProjects(nextProjects);
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error ? loadError.message : "No se pudieron cargar tus proyectos."
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    void loadProjects();
+  }, [loadProjects]);
+
   useEffect(() => {
     let isMounted = true;
 
-    async function loadProjects() {
+    async function loadOpportunityCounts() {
       try {
-        setIsLoading(true);
-        setError("");
-        const nextProjects = await reusePendingRequest(
-          `producer-projects:${token}`,
-          () => getMyProjects(token ?? undefined)
+        const opportunities = await reusePendingRequest(
+          `producer-projects-opportunity-counts:${token}`,
+          () => getMyOpportunities(token ?? undefined)
         );
 
-        if (isMounted) {
-          setProjects(nextProjects);
+        if (!isMounted) {
+          return;
         }
-      } catch (loadError) {
+
+        const counts: Record<string, number> = {};
+        opportunities.forEach((opportunity) => {
+          if (!opportunity.project_id) return;
+          counts[opportunity.project_id] = (counts[opportunity.project_id] ?? 0) + 1;
+        });
+        setOpportunityCountByProjectId(counts);
+      } catch {
         if (isMounted) {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : "No se pudieron cargar tus proyectos."
-          );
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
+          setOpportunityCountByProjectId({});
         }
       }
     }
 
-    void loadProjects();
+    void loadOpportunityCounts();
 
     return () => {
       isMounted = false;
@@ -328,14 +369,14 @@ function ProducerProjectsContent() {
     setFilters((current) => ({ ...current, [name]: value }));
   };
 
-  const navigateToEdit = (projectId: string) => {
-    navigate(`/producer/projects/${projectId}/edit`);
+  const openEditProjectModal = (projectId: string) => {
+    setDetailProject(null);
+    setProjectModal({ mode: "edit", projectId });
   };
 
-  const navigateToNewOpportunity = (projectId: string) => {
-    navigate("/producer/opportunities/new", {
-      state: { projectId },
-    });
+  const openCreateOpportunityModal = (projectId: string) => {
+    setDetailProject(null);
+    setOpportunityModal({ projectId });
   };
 
   const handleOpenProjectApplications = async (project: Project) => {
@@ -437,9 +478,13 @@ function ProducerProjectsContent() {
             )}
           </p>
         </div>
-        <Link className="producer-button producer-button--primary" to="/producer/projects/new">
+        <button
+          className="producer-button producer-button--primary"
+          type="button"
+          onClick={() => setProjectModal({ mode: "create" })}
+        >
           {tAuto("Nuevo proyecto")}
-        </Link>
+        </button>
       </section>
 
       {error ? (
@@ -533,7 +578,10 @@ function ProducerProjectsContent() {
               </thead>
               <tbody>
                 {filteredProjects.map((project) => {
-                  const opportunitiesCount = getProjectOpportunityCount(project);
+                  const opportunitiesCount = getProjectOpportunityCount(
+                    project,
+                    opportunityCountByProjectId
+                  );
 
                   return (
                     <tr key={project.id}>
@@ -577,14 +625,14 @@ function ProducerProjectsContent() {
                           <button
                             className="producer-button"
                             type="button"
-                            onClick={() => navigateToEdit(project.id)}
+                            onClick={() => openEditProjectModal(project.id)}
                           >
                             {tAuto("Editar")}
                           </button>
                           <button
                             className="producer-button"
                             type="button"
-                            onClick={() => navigateToNewOpportunity(project.id)}
+                            onClick={() => openCreateOpportunityModal(project.id)}
                           >
                             {tAuto("Crear convocatoria")}
                           </button>
@@ -670,7 +718,9 @@ function ProducerProjectsContent() {
               </div>
               <div>
                 <span>{tAuto("Convocatorias")}</span>
-                <strong>{getProjectOpportunityCount(detailProject)} conv.</strong>
+                <strong>
+                  {getProjectOpportunityCount(detailProject, opportunityCountByProjectId)} conv.
+                </strong>
               </div>
             </div>
 
@@ -678,14 +728,14 @@ function ProducerProjectsContent() {
               <button
                 className="producer-button"
                 type="button"
-                onClick={() => navigateToEdit(detailProject.id)}
+                onClick={() => openEditProjectModal(detailProject.id)}
               >
                 {tAuto("Editar")}
               </button>
               <button
                 className="producer-button"
                 type="button"
-                onClick={() => navigateToNewOpportunity(detailProject.id)}
+                onClick={() => openCreateOpportunityModal(detailProject.id)}
               >
                 {tAuto("Crear convocatoria")}
               </button>
@@ -850,6 +900,33 @@ function ProducerProjectsContent() {
           fallback={talentFallbackFromApplication(profileApplication)}
           token={token ?? undefined}
           onClose={() => setProfileApplication(null)}
+        />
+      ) : null}
+
+      {projectModal ? (
+        <ProjectFormModal
+          mode={projectModal.mode}
+          projectId={projectModal.mode === "edit" ? projectModal.projectId : undefined}
+          onClose={() => setProjectModal(null)}
+          onSaved={() => {
+            setProjectModal(null);
+            void loadProjects();
+          }}
+        />
+      ) : null}
+
+      {opportunityModal ? (
+        <OpportunityFormModal
+          mode="create"
+          initialProjectId={opportunityModal.projectId}
+          onClose={() => setOpportunityModal(null)}
+          onSaved={(createdOpportunity) => {
+            setOpportunityModal(null);
+            setOpportunityCountByProjectId((current) => ({
+              ...current,
+              [createdOpportunity.project_id]: (current[createdOpportunity.project_id] ?? 0) + 1,
+            }));
+          }}
         />
       ) : null}
 

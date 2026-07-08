@@ -42,6 +42,31 @@ export type OpportunityStatus =
 
 export type OpportunityModality = "REMOTE" | "ONSITE" | "HYBRID" | "FLEXIBLE";
 
+export type ProjectFilmFreewayFields = {
+  project_title?: string | null;
+  brief_synopsis?: string | null;
+  genres?: string[];
+  completion_year?: number | null;
+  duration_hours?: number | null;
+  duration_minutes?: number | null;
+  duration_seconds?: number | null;
+  country_of_origin?: string[];
+  country_of_filming?: string[];
+  languages?: string[];
+  directors?: string[];
+  writers?: string[];
+  producers?: string[];
+  key_cast?: string[];
+  shooting_format?: string | null;
+  aspect_ratio?: string | null;
+  film_color?: string | null;
+  production_budget?: number | null;
+  production_budget_currency?: string | null;
+  student_project?: boolean | null;
+  first_time_filmmaker?: boolean | null;
+  first_time_screenwriter?: boolean | null;
+};
+
 export type Project = {
   id: string;
   producer_id?: string;
@@ -55,7 +80,7 @@ export type Project = {
   opportunities_count?: number;
   created_at?: string;
   updated_at?: string;
-};
+} & ProjectFilmFreewayFields;
 
 export type ProjectCreatePayload = {
   title: string;
@@ -65,7 +90,7 @@ export type ProjectCreatePayload = {
   start_date: string | null;
   end_date: string | null;
   status: ProjectStatus | string;
-};
+} & ProjectFilmFreewayFields;
 
 export type ProjectUpdatePayload = ProjectCreatePayload;
 

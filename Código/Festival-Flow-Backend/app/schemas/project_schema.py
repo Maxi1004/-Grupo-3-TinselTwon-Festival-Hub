@@ -12,7 +12,41 @@ ALLOWED_STATUSES = {
 }
 
 
-class ProjectCreateRequest(BaseModel):
+class ProjectFilmFreewayFields(BaseModel):
+    """Optional fields that give the AI more context to autofill FilmFreeway forms."""
+
+    # Información general
+    project_title: str | None = None
+    brief_synopsis: str | None = None
+    genres: list[str] | None = None
+    completion_year: int | None = None
+    duration_hours: int | None = None
+    duration_minutes: int | None = None
+    duration_seconds: int | None = None
+    country_of_origin: list[str] | None = None
+    country_of_filming: list[str] | None = None
+    languages: list[str] | None = None
+
+    # Equipo principal
+    directors: list[str] | None = None
+    writers: list[str] | None = None
+    producers: list[str] | None = None
+    key_cast: list[str] | None = None
+
+    # Información técnica
+    shooting_format: str | None = None
+    aspect_ratio: str | None = None
+    film_color: str | None = None
+    production_budget: float | None = None
+    production_budget_currency: str | None = None
+
+    # Información adicional
+    student_project: bool | None = None
+    first_time_filmmaker: bool | None = None
+    first_time_screenwriter: bool | None = None
+
+
+class ProjectCreateRequest(ProjectFilmFreewayFields):
     title: str
     description: str
     production_type: str
@@ -22,7 +56,7 @@ class ProjectCreateRequest(BaseModel):
     status: str
 
 
-class ProjectUpdateRequest(BaseModel):
+class ProjectUpdateRequest(ProjectFilmFreewayFields):
     title: str
     description: str
     production_type: str
@@ -46,7 +80,7 @@ class ProjectStatusUpdateRequest(BaseModel):
         return normalized
 
 
-class ProjectResponse(BaseModel):
+class ProjectResponse(ProjectFilmFreewayFields):
     id: str
     owner_uid: str
     title: str
